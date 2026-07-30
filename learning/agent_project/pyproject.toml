@@ -1,0 +1,22 @@
+[project]
+name = "agent_project"
+version = "0.1.0"
+description = "AI Agent 学习项目:文档解析(PDF/MD)、智能分块、向量嵌入"
+requires-python = ">=3.12"
+dependencies = [
+    "pdfplumber",
+    "rapidocr-onnxruntime",
+    "onnxruntime",
+    "opencv-python",
+    "numpy",
+    "langchain-text-splitters",
+    "sentence-transformers",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# src-layout:告诉 setuptools 去 src/ 下发现包(会自动找到 agent_project 及其所有子包)
+[tool.setuptools.packages.find]
+where = ["src"]

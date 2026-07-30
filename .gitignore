@@ -1,0 +1,54 @@
+# ===== Python：字节码与构建产物 =====
+# .pyc 缓存,随解释器版本变化,无追踪价值
+__pycache__/
+*.py[cod]
+# pip install -e . 生成的包元数据,可由 pyproject.toml 重建
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ===== 工具缓存(提前预留,现在没用将来也不会误提交)=====
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ===== 虚拟环境 =====
+# 本项目用 conda learning 环境(在 S:\Anaconda/envs,不在仓库内),这里仅为兼容 venv 习惯
+.venv/
+venv/
+env/
+
+# ===== 项目数据产物:可重建,勿入库 =====
+# 阶段3 build_index 产物:FAISS 向量库(.index 二进制)+ 原文 JSON,均可从源文档重建。
+# .index 是二进制大文件,git 不擅长存储,且每次重建可能变化,制造无意义 diff。
+learning/agent_project/data/output/
+# 清洗/缓存中间产物(可重建)
+learning/agent_project/data/cleaned/
+learning/agent_project/data/cache/
+# 运行日志
+learning/agent_project/logs/
+*.log
+
+# ===== 临时验证脚本(一次性实验,非正式项目代码)=====
+# 若某个脚本有价值想保留:git add -f <file> 强制添加
+temp/
+
+# ===== 临时产物目录 =====
+artifacts/
+
+# ===== IDE 配置(含本地绝对路径如 S:/Anaconda/...,机器特定)=====
+.idea/
+.vscode/
+
+# ===== 敏感配置(阶段4 接 LLM 时放 API key,绝不入库)=====
+.env
+.env.*
+!.env.example
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
+desktop.ini
