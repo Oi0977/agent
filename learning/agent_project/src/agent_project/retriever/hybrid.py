@@ -126,6 +126,41 @@ def hybrid_search(query, index_path, meta_path, k=20, n_per_route=None):
 
 # ========== 多文档检索(SPEC-005)==========
 
+# 向量路相似度地板:cosine 低于此值视为"无语义信号",不参与融合排名(卫生项)。
+# 单文档 hybrid_search(SPEC-002 契约)不受影响。
+VEC_FLOOR = 0.35
+
+# 全局 BM25 库缓存:键 = 排序后的全部 meta 路径元组(入库集合变了自动重建)
+_global_lib_cache = {}
+
+
+def _get_global_lib(pairs):
+    """
+    跨文档全局 BM25 库:合并所有文档的块统一建词法索引。
+
+    为什么必须全局:rank_bm25 的 IDF 是**库内**统计 —— 各库分别建 BM25 时,
+    3 块小库里 0.09 分的噪音匹配也拿满"第1名",与 465 块大库 13.2 分的第1名
+    在 RRF 里同权(SPEC-005 修订记录:实测弱匹配双路双计后反压真结果)。
+    向量分数同一嵌入模型天然跨库可比,可各库分路;BM25 分数不跨库可比,必须全局。
+    """
+    key = tuple(sorted(m for _, m in pairs))
+    if key not in _global_lib_cache:
+        import json
+        from rank_bm25 import BM25Okapi
+        chunks, keys = [], []          # keys[i] = (doc_id, chunk_idx)
+        for doc_id, (_, mpath) in enumerate(pairs):
+            with open(mpath, encoding="utf-8") as f:
+                d = json.load(f)
+            for i, c in enumerate(d["chunks"]):
+                chunks.append(c)
+                keys.append((doc_id, i))
+        corpus = [_tokenize(c) for c in chunks]
+        _global_lib_cache[key] = {
+            "bm25": BM25Okapi(corpus), "keys": keys, "chunks": chunks,
+        }
+    return _global_lib_cache[key]
+
+
 def discover_docs(output_dir=None) -> list[tuple[str, str]]:
     """
     扫描 output 目录,返回 [(index_path, meta_path)] 产物对。
@@ -144,15 +179,18 @@ def discover_docs(output_dir=None) -> list[tuple[str, str]]:
 
 def hybrid_search_all(query, k=20, n_per_route=10, output_dir=None):
     """
-    多文档混合检索:对 output 目录下**每个** (index, json) 对,
-    各出"向量一路 + BM25 一路"排名 → 2×D 路 RRF 融合。
+    多文档混合检索(D+1 路 RRF 融合):
+
+    - 向量路 × D(每文档一路):余弦分出自同一嵌入模型,跨库可比,各库各取前 n
+      (cosine < VEC_FLOOR 的弱匹配不参与排名)
+    - BM25 路 × 1(全局一路):合并全部文档块统一建库 —— IDF 必须全局统计,
+      否则小库的噪音匹配也拿满"第1名"排名分、与真结果同权(SPEC-005 修订记录)
 
     候选 key = (doc_id, chunk_idx) 元组 —— _rrf_fuse 只要求可哈希,原样复用;
-    跨文档只用排名不用分数,大文档小文档机会均等(RRF 天然按名次归一)。
     命中的 meta.source 记录来源文档文件名,下游可区分。
 
     :param k: 融合后保留的候选数
-    :param n_per_route: 每文档每路取前 n 参与融合
+    :param n_per_route: 各路取前 n 参与融合
     :param output_dir: 知识库目录(默认 PathManager.OUTPUT_DIR)
     """
     pairs = discover_docs(output_dir)
@@ -162,10 +200,15 @@ def hybrid_search_all(query, k=20, n_per_route=10, output_dir=None):
 
     rank_lists = []
     for doc_id, (ipath, mpath) in enumerate(pairs):
-        vec_hits = search(query, ipath, mpath, k=n_per_route)
+        vec_hits = [h for h in search(query, ipath, mpath, k=n_per_route)
+                    if h["score"] >= VEC_FLOOR]
         rank_lists.append([(doc_id, h["meta"]["chunk_idx"]) for h in vec_hits])
-        bm25_pairs = _bm25_search(query, mpath, n=n_per_route)
-        rank_lists.append([(doc_id, i) for i, _ in bm25_pairs])
+
+    # 全局 BM25 一路:统一 IDF,弱词法匹配沉到长尾(排名贡献趋近于零)
+    glib = _get_global_lib(pairs)
+    g_scores = glib["bm25"].get_scores(_tokenize(query))
+    g_order = np.argsort(g_scores)[::-1][:n_per_route]
+    rank_lists.append([glib["keys"][int(i)] for i in g_order if g_scores[i] > 0])
 
     fused = _rrf_fuse(rank_lists)
     order = sorted(fused.items(), key=lambda x: x[1], reverse=True)[:k]

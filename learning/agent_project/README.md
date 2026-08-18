@@ -94,6 +94,7 @@ src/agent_project/
 ✅ 多文档知识库 + 工具注册表 + 入库命令(SPEC-005)
 ✅ Token 记账与上下文预算(SPEC-006)
 ✅ 交互式会话终端 + 会话持久化(SPEC-007)
+✅ 评测基线(金标集 + hit@3/MRR + LLM-judge,SPEC-008)
     │
     ▼
 【下一步】LangGraph 生产级 Agent(状态机+条件分支+持久化)
@@ -126,6 +127,21 @@ python -m agent_project.chat    # 持续多轮对话;每轮显示 token 统计
 ```
 
 会话内命令:`/new` 新会话 · `/save [名]` 保存 · `/load <名>` 载入 · `/list` 列已存会话 · `/exit` 退出。
+
+### 评测基线(SPEC-008)
+
+```bash
+python tests/eval_retrieval.py          # 三配置检索基线(hit@3 / MRR)
+python tests/eval_answer.py --limit 5   # LLM-as-judge 答案忠实度(1-5)
+```
+
+基线数字(16 题金标集,双文档库,k=3,2026-08-19):
+
+| 配置 | hit@3 | MRR | 字面题 hit@3 |
+|---|---|---|---|
+| 纯向量 | 75.0% | 0.604 | 89% |
+| 混合(全局 BM25 + 向量,RRF) | 75.0% | 0.604 | **100%** |
+| 混合 + cross-encoder 精排 | 75.0% | **0.688** | 89% |
 
 ### 快速验证(复用已有索引)
 

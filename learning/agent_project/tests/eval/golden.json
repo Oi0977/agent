@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "note": "SPEC-008 金标集(AI 依据已验收的检索行为标注,首版接受 AI 标注性质)。相关判定:块原文含任一关键词(大小写不敏感)。type: literal=字面重合题, semantic=语义改写题。",
+  "questions": [
+    {"id": "q01", "type": "literal",  "question": "pcapng 文件格式是什么?和 pcap 有什么区别?", "keywords": ["pcapng"]},
+    {"id": "q02", "type": "literal",  "question": "Wireshark 里怎么解密 HTTPS 流量?", "keywords": ["SSL", "解密"]},
+    {"id": "q03", "type": "literal",  "question": "如何跟随一条 TCP 流的完整内容?", "keywords": ["Follow", "流跟踪"]},
+    {"id": "q04", "type": "literal",  "question": "捕获过滤器怎么写?只想抓 80 端口的包", "keywords": ["捕获过滤器"]},
+    {"id": "q05", "type": "literal",  "question": "显示过滤器和捕获过滤器有什么区别?", "keywords": ["显示过滤器"]},
+    {"id": "q06", "type": "literal",  "question": "TCP 重传是怎么回事?怎么在抓包里看出来?", "keywords": ["重传"]},
+    {"id": "q07", "type": "literal",  "question": "Wireshark 的着色规则有什么用?", "keywords": ["着色"]},
+    {"id": "q08", "type": "literal",  "question": "怎么看整个捕获文件里各会话的流量统计?", "keywords": ["Conversations", "对话"]},
+    {"id": "q09", "type": "literal",  "question": "怎么开启校验和验证来发现坏包?", "keywords": ["校验和"]},
+    {"id": "q10", "type": "semantic", "question": "怎么把浏览器加密的网页流量还原成明文看?", "keywords": ["SSL", "解密"]},
+    {"id": "q11", "type": "semantic", "question": "TCP 包里表示数据顺序的编号字段叫什么?", "keywords": ["序列号"]},
+    {"id": "q12", "type": "semantic", "question": "想看每个网络地址各自收发了多少流量,用什么功能?", "keywords": ["Endpoints", "端点"]},
+    {"id": "q13", "type": "semantic", "question": "怎么知道某个包是不是对方没收到而重新发送的?", "keywords": ["重传"]},
+    {"id": "q14", "type": "semantic", "question": "诊断提示里那些警告信息从哪里看?", "keywords": ["专家"]},
+    {"id": "q15", "type": "semantic", "question": "排查网络故障时怎么看数据包的存活时间字段?", "keywords": ["TTL"]},
+    {"id": "q16", "type": "semantic", "question": "地址解析协议出了问题该怎么排查?", "keywords": ["ARP"]}
+  ]
+}

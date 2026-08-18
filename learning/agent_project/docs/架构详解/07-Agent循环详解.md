@@ -255,9 +255,10 @@ execute_tool(name, arguments)  # → 统一分发;任何失败转字符串回注
 
 多文档检索(SPEC-005)上线当天就踩出"小文档名次压缩"(详见 04 详解 §9):
 纯 RRF 序下,"Wireshark 解密 HTTPS"的 top1 被 3 块的小笔记文档抢走。
-修法:agent 的 search 工具与 `rag_answer` 对齐为**两段式**——
-`hybrid_search_all` 召回 top-10 → `rerank` 交叉编码器精排 top-5,
-精排失败退回 RRF 序(不中断)。教训一句话:**跨文档融合的排序仅供参考,
+修复分两层:**召回层治本**(全局 BM25 统一 IDF + 向量路相似度地板,
+SPEC-008 评测驱动),**排序层兜底**——agent 的 search 工具与 `rag_answer`
+对齐为**两段式**:`hybrid_search_all` 召回 top-10 → `rerank` 交叉编码器精排
+top-5,精排失败退回 RRF 序(不中断)。教训一句话:**跨文档融合的排序仅供参考,
 精排才是最终裁判**。
 
 ## 9. 会话终端:Agent 的"身体"(SPEC-007)
