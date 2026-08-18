@@ -57,14 +57,16 @@ snapshot_download("模型名", cache_dir=r"S:\huggingface_cache")
 
 ```
 src/agent_project/
-├── main.py            # 演示入口(各阶段验收)
+├── main.py            # 演示入口(各阶段验收,已有索引则复用)
+├── ingest.py          # 入库命令:python -m agent_project.ingest <文件...> [--list]
 ├── path_manager.py    # 统一路径管理
 ├── preprocessor/      # 【阶段1】文档解析(pdf/md 自适应)
 ├── chunker/           # 【阶段1】文本分块
 ├── embedder/          # 【阶段2】向量嵌入(BGE)
-├── retriever/         # 【阶段3】检索(向量 + BM25/RRF 混合粗排)
+├── retriever/         # 【阶段3】检索(单文档混合 + 多文档 2×D 路 RRF)
 ├── reranker/          # 【阶段5】精排重排(cross-encoder)
-└── generator/         # 【阶段4】LLM 生成(智谱 API)
+├── generator/         # 【阶段4】LLM 生成(智谱 API)
+└── agent/             # 【阶段6】Agent 循环 + 多轮记忆 + 工具注册表
 ```
 
 ## 四、文档索引
@@ -79,6 +81,7 @@ src/agent_project/
 | ⑤ 重排:交叉编码器/两段式/实证 | docs/架构详解/05 |
 | ⑥ 生成:prompt 设计/薄抽象 | docs/架构详解/06 |
 | ⑦ Agent 循环:while+tool_calls/tool-call loop/多轮记忆/框架选型 | docs/架构详解/07 |
+| ⑧ Token 与上下文预算:token 原理/usage/估算与预算 | docs/架构详解/08 |
 | 功能行为契约(SDD) | [docs/specs/](docs/specs/README.md) |
 | 开发流程与环境铁律 | 仓库根 CLAUDE.md |
 
@@ -105,6 +108,13 @@ Agent 框架选型到 Agent 阶段再评估(LangGraph 状态机式编排是届�
 
 - Python:Anaconda `learning` 环境(`conda activate learning`)
 - API Key:复制 `.env.example` 为 `.env`,填入智谱 API Key
+
+### 知识库管理(入库/列表)
+
+```bash
+python -m agent_project.ingest 你的文档.pdf 另一份.md   # 入库(同名覆盖)
+python -m agent_project.ingest --list                  # 列出已入库文档
+```
 
 ### 快速验证(复用已有索引)
 
@@ -158,6 +168,7 @@ python -m agent_project.main
 | 免费 API 429 限流 | max_retries=5 + 重试 | 详解06 |
 | conda 装"小"包后行为大变 | 可能连带升级全家桶,装完回归验证 | 详解03 |
 | 脚本启动慢(~25s) | langchain_text_splitters 首次 import 拖全家,非 bug | 详解04 |
+| 多文档检索小文档抢榜首 | RRF 小文档名次压缩,靠精排纠序(search 工具已两段式) | 详解04§9 |
 
 ---
 

@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
+from agent_project.path_manager import PathManager
 from agent_project.retriever.searcher import search
 
 K_RRF = 60
@@ -119,5 +120,68 @@ def hybrid_search(query, index_path, meta_path, k=20, n_per_route=None):
                 "rrf_score": rrf,
                 "vector_score": vec_map.get(idx),   # 来源分:该路原始分,未入该路 top 为 None
                 "bm25_score": bm25_map.get(idx),
+            })
+    return hits
+
+
+# ========== 多文档检索(SPEC-005)==========
+
+def discover_docs(output_dir=None) -> list[tuple[str, str]]:
+    """
+    扫描 output 目录,返回 [(index_path, meta_path)] 产物对。
+
+    只认"成对存在"的(.index, .json) —— 缺伴的 .index 是残骸,不参与检索。
+    按文件名排序保证 doc_id 分配稳定(同名覆盖重入库后顺序不变)。
+    """
+    d = Path(output_dir) if output_dir else PathManager().OUTPUT_DIR
+    pairs = []
+    for idx in sorted(d.glob("*.index")):
+        meta = idx.with_suffix(".json")
+        if meta.exists():
+            pairs.append((str(idx), str(meta)))
+    return pairs
+
+
+def hybrid_search_all(query, k=20, n_per_route=10, output_dir=None):
+    """
+    多文档混合检索:对 output 目录下**每个** (index, json) 对,
+    各出"向量一路 + BM25 一路"排名 → 2×D 路 RRF 融合。
+
+    候选 key = (doc_id, chunk_idx) 元组 —— _rrf_fuse 只要求可哈希,原样复用;
+    跨文档只用排名不用分数,大文档小文档机会均等(RRF 天然按名次归一)。
+    命中的 meta.source 记录来源文档文件名,下游可区分。
+
+    :param k: 融合后保留的候选数
+    :param n_per_route: 每文档每路取前 n 参与融合
+    :param output_dir: 知识库目录(默认 PathManager.OUTPUT_DIR)
+    """
+    pairs = discover_docs(output_dir)
+    if not pairs:
+        raise FileNotFoundError(
+            "知识库为空:请先 python -m agent_project.ingest <文件> 入库")
+
+    rank_lists = []
+    for doc_id, (ipath, mpath) in enumerate(pairs):
+        vec_hits = search(query, ipath, mpath, k=n_per_route)
+        rank_lists.append([(doc_id, h["meta"]["chunk_idx"]) for h in vec_hits])
+        bm25_pairs = _bm25_search(query, mpath, n=n_per_route)
+        rank_lists.append([(doc_id, i) for i, _ in bm25_pairs])
+
+    fused = _rrf_fuse(rank_lists)
+    order = sorted(fused.items(), key=lambda x: x[1], reverse=True)[:k]
+
+    libs = [None] * len(pairs)  # 惰性取库缓存:只给真正进入 top-k 的文档取
+    hits = []
+    for (doc_id, idx), rrf in order:
+        if libs[doc_id] is None:
+            libs[doc_id] = _get_lib(pairs[doc_id][1])
+        lib = libs[doc_id]
+        chunks, metas = lib["chunks"], lib["metas"]
+        if 0 <= idx < len(chunks):
+            hits.append({
+                "chunk": chunks[idx],
+                "meta": metas[idx],        # meta.source = 来源文档文件名
+                "score": rrf,
+                "rrf_score": rrf,
             })
     return hits

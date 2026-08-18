@@ -56,14 +56,23 @@ if __name__ == "__main__":
     print(f"向量数量: {len(embeddings)}, 维度: {len(embeddings[0])}")
 
     # ========== 阶段三：检索（建库 + 检索）==========
+    from pathlib import Path
+
     from agent_project.retriever import build_index, search
+    from agent_project.retriever.hybrid import discover_docs
 
     print("\n" + "=" * 50)
-    print(">>> 阶段三：建库（FAISS）...")
-    index_path, meta_path, n_chunks = build_index(file_path)
-    print(f"建库完成: {n_chunks} 个块")
-    print(f"  向量库(.index): {index_path}")
-    print(f"  原文+元数据(.json): {meta_path}")
+    # 索引复用(SPEC-005):已有产物就不重建 —— 建库是离线动作,归 ingest 管
+    existing = discover_docs()
+    if existing:
+        index_path, meta_path = existing[0]
+        print(f">>> 阶段三：复用已有索引（不重建）: {Path(index_path).name}")
+    else:
+        print(">>> 阶段三：建库（FAISS）...")
+        index_path, meta_path, n_chunks = build_index(file_path)
+        print(f"建库完成: {n_chunks} 个块")
+        print(f"  向量库(.index): {index_path}")
+        print(f"  原文+元数据(.json): {meta_path}")
 
     print("\n>>> 阶段三：检索（top-3）...")
     queries = [

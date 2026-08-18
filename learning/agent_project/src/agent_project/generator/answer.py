@@ -27,5 +27,6 @@ def rag_answer(question: str, index_path, meta_path, k: int = 3, recall_k: int =
     hits = hybrid_search(question, index_path, meta_path, k=recall_k)  # 粗排:两路融合
     hits = rerank(question, hits, top_k=k)                             # 精排:慢而准
     prompt = build_prompt(question, hits)                              # 拼装:块 + 问题 → prompt
-    answer = chat(prompt)                                              # 生成:prompt → 答案
+    response = chat([{"role": "user", "content": prompt}])             # 生成:prompt → 答案
+    answer = response.choices[0].message.content or ""
     return {"answer": answer, "hits": hits}

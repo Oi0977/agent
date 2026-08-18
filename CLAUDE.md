@@ -14,6 +14,7 @@ ai_agent/
     └── agent_project/         # 当前主要项目
         ├── src/agent_project/
         │   ├── main.py        # 演示入口（各阶段验收）
+        │   ├── ingest.py      # 入库命令（python -m agent_project.ingest）
         │   ├── preprocessor/  # 【阶段1】文档解析（pdf/md 自适应）
         │   ├── chunker/       # 【阶段1】文本分块
         │   ├── embedder/      # 【阶段2】向量嵌入（BGE）

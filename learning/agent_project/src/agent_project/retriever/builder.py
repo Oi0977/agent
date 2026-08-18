@@ -39,13 +39,14 @@ def _ascii_name(stem: str) -> str:
     return f"{ascii_part or 'doc'}_{digest}"
 
 
-def build_index(file_path, chunk_size=500, chunk_overlap=50):
+def build_index(file_path, chunk_size=500, chunk_overlap=50, output_dir=None):
     """
     解析 → 分块 → 嵌入 → 建 FAISS 库 → 落盘。
 
     :param file_path: 待建库的文档路径(.pdf / .md)
     :param chunk_size: 分块大小(字符)
     :param chunk_overlap: 块间重叠(字符)
+    :param output_dir: 产物目录(默认 PathManager.OUTPUT_DIR;测试可注入临时目录)
     :return: (index_path, meta_path, 块数)
     """
     # 1. 解析 + 分块
@@ -70,11 +71,16 @@ def build_index(file_path, chunk_size=500, chunk_overlap=50):
 
     # 5. 落盘:向量 → FAISS 的 .index;原文+元数据 → JSON。两份各自独立,靠下标 id 连接。
     #    文件名用 ASCII:FAISS 的 write_index 在 Windows 不支持中文文件名(见 _ascii_name)。
-    pm = PathManager()
-    pm.init_all_dirs()
+    if output_dir is not None:
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+    else:
+        pm = PathManager()
+        pm.init_all_dirs()
+        out = pm.OUTPUT_DIR
     name = _ascii_name(Path(file_path).stem)
-    index_path = pm.OUTPUT_DIR / f"{name}.index"
-    meta_path = pm.OUTPUT_DIR / f"{name}.json"
+    index_path = out / f"{name}.index"
+    meta_path = out / f"{name}.json"
 
     faiss.write_index(index, str(index_path))
     with open(meta_path, "w", encoding="utf-8") as f:

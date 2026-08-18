@@ -7,142 +7,28 @@ LLM 每轮输出两种可能之一:
   ① 返回 tool_calls → 说明"我要调某个工具" → 执行工具 → 结果回注 → 再来一轮
   ② 返回 content    → 说明"我有答案了"     → 返回最终回答
 
-代码只需判断"有没有 tool_calls",有就执行并回注,没有就返回。
+工具从注册表来(agent/tools.py):@tool 一处声明,这里自动取 schema、统一分发。
 
 多轮记忆(SPEC-004):LLM API 无状态,"记忆"由客户端持 messages 列表跨调用实现 ——
 run() 返回 (答案, 压缩历史),调用方把历史传回下一次 run()。
 """
 import json
-from pathlib import Path
 
+from agent_project.agent.tools import execute_tool, get_tool_schemas
 from agent_project.generator.llm_client import chat
-
-# ---------- 上下文目录:search 需要索引路径 ----------
-_pm = None
-
-
-def _get_pm():
-    global _pm
-    if _pm is None:
-        from agent_project.path_manager import PathManager
-        _pm = PathManager()
-    return _pm
-
-
-def _find_index():
-    """自动发现 output 目录下已有的 .index/.json 对。"""
-    pm = _get_pm()
-    pm.init_all_dirs()
-    indexes = list(pm.OUTPUT_DIR.glob("*.index"))
-    if not indexes:
-        raise FileNotFoundError("data/output/ 下没有 .index 文件,请先 build_index")
-    idx = indexes[0]
-    meta = idx.with_suffix(".json")
-    if not meta.exists():
-        raise FileNotFoundError(f"索引文件 {idx.name} 缺少对应的 .json 元数据")
-    return str(idx), str(meta)
-
-
-# ========== 工具定义 ==========
-
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search",
-            "description": (
-                "从知识库中检索与问题相关的文档片段。"
-                "当用户的问题涉及特定技术细节、概念解释、操作步骤时,"
-                "调用此工具获取参考资料再组织回答。"
-                "返回最相关的 20 个文档块。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "检索关键词或问题"
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "direct_answer",
-            "description": (
-                "直接回答用户问题,不需要从知识库检索。"
-                "当问题与知识库内容无关(如问候、简单计算、闲聊)时,"
-                "调用此工具直接给出回答。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "answer": {
-                        "type": "string",
-                        "description": "直接回答的内容"
-                    }
-                },
-                "required": ["answer"]
-            }
-        }
-    }
-]
-
-
-# ========== 工具执行 ==========
-
-def _exec_tool(name: str, arguments: dict) -> str:
-    """执行工具并返回字符串结果(供 LLM 阅读)。"""
-    global hybrid_search
-    if hybrid_search is None:
-        hybrid_search = _import_hybrid()
-
-    if name == "search":
-        query = arguments.get("query", "")
-        try:
-            idx_path, meta_path = _find_index()
-            hits = hybrid_search(query, idx_path, meta_path, k=10)
-            lines = []
-            for i, h in enumerate(hits, 1):
-                preview = h["chunk"][:200].replace("\n", " ")
-                rrf = h.get("rrf_score", 0)
-                lines.append(f"【{i}】(rrf={rrf:.4f}) {preview}...")
-            return f"检索到 {len(hits)} 个相关文档块:\n\n" + "\n\n".join(lines)
-        except Exception as e:
-            return f"检索失败: {e}"
-
-    elif name == "direct_answer":
-        return arguments.get("answer", "(空回答)")
-
-    else:
-        return f"未知工具: {name}"
-
-
-# ========== Agent 主循环 ==========
-
-def _import_hybrid():
-    """延迟导入 hybrid_search(避免循环依赖,也避免 jieba 冷启动拖慢其他模块)。"""
-    from agent_project.retriever import hybrid_search
-    return hybrid_search
-
-
-# 全局引用,延迟初始化
-hybrid_search = None
-
 
 # ========== 轮间记忆(SPEC-004)==========
 
 SYSTEM_PROMPT = (
-    "你是技术文档问答助手。工具说明:\n"
-    "- search: 从知识库检索文档片段。调用时传入最相关的查询词。\n"
-    "- direct_answer: 不需要检索,直接回答。\n\n"
+    "你是技术文档问答助手。可用工具:\n"
+    "- search: 从知识库(多文档)检索片段。问题涉及技术细节/概念/操作步骤时先用它。\n"
+    "- direct_answer: 不需要检索,直接回答(问候/闲聊/常识)。\n"
+    "- calculator: 数学计算。任何算术都用它,不要心算。\n"
+    "- list_documents: 列出知识库里有哪些文档。\n\n"
     "核心规则:\n"
-    "1. 收到问题后,如果与知识库相关,先调用 search 检索一次。\n"
-    "2. 收到 search 结果后,你必须立即基于结果组织回答并直接输出,不要再调任何工具。\n"
-    "3. 如果问题简单/与知识库无关,用 direct_answer 直接回答。\n"
+    "1. 与知识库相关的问题,先调用 search 检索一次。\n"
+    "2. 收到 search 结果后,立即基于结果组织回答并直接输出,不要再调任何工具。\n"
+    "3. 简单/与知识库无关的问题用 direct_answer;算术用 calculator。\n"
     "4. 严格限制:每次对话最多调用一次 search。"
 )
 
@@ -201,9 +87,7 @@ def run(question: str, history=None, max_iterations: int = 5,
     :param verbose: 是否打印每轮决策过程
     :return: (answer, history) —— history 可直接作为下一轮的 history 参数
     """
-    global hybrid_search
-    if hybrid_search is None:
-        hybrid_search = _import_hybrid()
+    TOOLS = get_tool_schemas()
 
     sep = "=" * 56
 
@@ -262,8 +146,8 @@ def run(question: str, history=None, max_iterations: int = 5,
             if verbose:
                 print(f"    → {fn_name}({json.dumps(fn_args, ensure_ascii=False)[:80]})")
 
-            # 执行工具
-            result = _exec_tool(fn_name, fn_args)
+            # 执行工具(注册表统一分发,失败转字符串回注)
+            result = execute_tool(fn_name, fn_args)
 
             if verbose:
                 print(f"    ← 返回 {len(result)} 字符")

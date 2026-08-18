@@ -228,7 +228,39 @@ ans2, hist = run("你说的第二步在哪个菜单?", history=hist)     # messa
 | 摘要压缩 | 旧轮 LLM 压成一段摘要替换原文 | 轮数多且早期上下文仍关键 |
 | 检索式记忆 | 历史存向量库,按当前问题检索注入 | 跨会话长期记忆(MemGPT 思路) |
 
-## 8. Q&A 自测
+## 8. 工具注册表与多文档检索(SPEC-005)
+
+### 注册表:函数与 schema 绑在同一处声明
+
+SPEC-003 的工具是"手写 JSON schema 拼在 TOOLS 列表 + `_exec_tool` 里 if-else 分发"
+——加一个工具要改两处,漂移迟早发生。SPEC-005 改为注册式(`agent/tools.py`):
+
+```python
+@tool(name="calculator", description="计算数学表达式...", parameters={...})
+def tool_calculator(expression: str) -> str:
+    ...
+
+get_tool_schemas()   # → LLM 的 tools 参数,自动生成
+execute_tool(name, arguments)  # → 统一分发;任何失败转字符串回注,循环不崩
+```
+
+对照业界:LangChain 的 `@tool` 装饰器、OpenAI 的 function schema,本质相同——
+把"LLM 看的 schema"和"代码执行的函数"绑在**同一处**。新增工具 = 写函数 + 一处声明。
+
+新工具两个:**calculator**(ast 白名单安全求值,只放行数字与算术节点,
+`import os`/`__import__`/变量名一律拒绝——永不 `eval` 裸字符串)、
+**list_documents**(列知识库清单,LLM 可先看库里有什么再决定怎么搜)。
+
+### search 工具升级为两段式(真机踩坑倒逼)
+
+多文档检索(SPEC-005)上线当天就踩出"小文档名次压缩"(详见 04 详解 §9):
+纯 RRF 序下,"Wireshark 解密 HTTPS"的 top1 被 3 块的小笔记文档抢走。
+修法:agent 的 search 工具与 `rag_answer` 对齐为**两段式**——
+`hybrid_search_all` 召回 top-10 → `rerank` 交叉编码器精排 top-5,
+精排失败退回 RRF 序(不中断)。教训一句话:**跨文档融合的排序仅供参考,
+精排才是最终裁判**。
+
+## 9. Q&A 自测
 
 ### Q1 · Agent 和 RAG 的本质区别是什么?RAG 是 Agent 吗?
 **难度: 基础** · 考点: 概念区分
