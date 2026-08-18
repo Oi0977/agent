@@ -8,6 +8,9 @@ LLM 每轮输出两种可能之一:
   ② 返回 content    → 说明"我有答案了"     → 返回最终回答
 
 代码只需判断"有没有 tool_calls",有就执行并回注,没有就返回。
+
+多轮记忆(SPEC-004):LLM API 无状态,"记忆"由客户端持 messages 列表跨调用实现 ——
+run() 返回 (答案, 压缩历史),调用方把历史传回下一次 run()。
 """
 import json
 from pathlib import Path
@@ -130,14 +133,73 @@ def _import_hybrid():
 hybrid_search = None
 
 
-def run(question: str, max_iterations: int = 5, verbose: bool = True) -> str:
+# ========== 轮间记忆(SPEC-004)==========
+
+SYSTEM_PROMPT = (
+    "你是技术文档问答助手。工具说明:\n"
+    "- search: 从知识库检索文档片段。调用时传入最相关的查询词。\n"
+    "- direct_answer: 不需要检索,直接回答。\n\n"
+    "核心规则:\n"
+    "1. 收到问题后,如果与知识库相关,先调用 search 检索一次。\n"
+    "2. 收到 search 结果后,你必须立即基于结果组织回答并直接输出,不要再调任何工具。\n"
+    "3. 如果问题简单/与知识库无关,用 direct_answer 直接回答。\n"
+    "4. 严格限制:每次对话最多调用一次 search。"
+)
+
+
+def _build_history(prev, question, answer, max_turns=10):
     """
-    最小 Agent 循环:LLM 自主决策调工具→结果回注→循环直到给出答案。
+    轮间历史构造(纯函数,可离线单测 —— SPEC-004 AC2/AC5 的落点)。
+
+    轮内工作列表(含 assistant 的 tool_calls 意图与 tool 结果)用完即弃,从不进入历史:
+    一次 search 回注约 2500 字符,是历史体积的大头;压成 [user, assistant] 原子对后,
+    窗口截断只需按对切片,永不拆散 OpenAI 协议要求的 tool_calls/tool 配对。
+
+    :param prev: 上一轮返回的压缩历史([system] + N 个 [user, assistant] 对);首轮传 None
+    :param question: 本轮原始问题。显式传入而非从工作列表提取 ——
+        兜底路径中追加的是 fallback prompt,不是用户的原始问题
+    :param answer: 本轮最终答案(正常回答或兜底答案)
+    :param max_turns: 最多保留的轮数(system 不计)
+    :return: [system] + 最近 ≤max_turns 个 [user, assistant] 对
+    """
+    if prev:
+        system = [dict(m) for m in prev if m.get("role") == "system"]
+        users = [m for m in prev if m.get("role") == "user"]
+        assistants = [m for m in prev if m.get("role") == "assistant"]
+        pairs = list(zip(users, assistants))  # 压缩历史严格成对,zip 安全
+    else:
+        system = [{"role": "system", "content": SYSTEM_PROMPT}]
+        pairs = []
+
+    pairs = pairs + [({"role": "user", "content": question},
+                      {"role": "assistant", "content": answer})]
+    if len(pairs) > max_turns:
+        pairs = pairs[-max_turns:]
+
+    history = list(system)
+    for u, a in pairs:
+        history.append({"role": "user", "content": u.get("content") or ""})
+        history.append({"role": "assistant", "content": a.get("content") or ""})
+    return history
+
+
+# ========== Agent 主循环 ==========
+
+def run(question: str, history=None, max_iterations: int = 5,
+        max_turns: int = 10, verbose: bool = True) -> tuple:
+    """
+    最小 Agent 循环 + 多轮记忆:LLM 自主决策调工具→结果回注→循环直到给出答案。
+
+    返回 (答案, 压缩历史),调用方持有历史跨轮传递:
+        ans1, hist = run("第一个问题")
+        ans2, hist = run("针对答案的追问", history=hist)   ← 这就是"记忆"
 
     :param question: 用户问题
-    :param max_iterations: 最大循环轮次(防无限循环)
+    :param history: 上一轮返回的压缩历史;None/空列表 = 新会话(SPEC-003 行为)
+    :param max_iterations: 单轮内 Agent 循环最大轮次(防无限循环)
+    :param max_turns: 返回历史最多保留的对话轮数(system 不计)
     :param verbose: 是否打印每轮决策过程
-    :return: LLM 最终答案
+    :return: (answer, history) —— history 可直接作为下一轮的 history 参数
     """
     global hybrid_search
     if hybrid_search is None:
@@ -145,25 +207,23 @@ def run(question: str, max_iterations: int = 5, verbose: bool = True) -> str:
 
     sep = "=" * 56
 
+    # 新会话:[system, user] 起步(SPEC-003 行为,AC4 向后等价);
+    # 续聊:历史 + 新 user(system 已在历史头部,不重复添加)
+    if history:
+        messages = list(history) + [{"role": "user", "content": question}]
+    else:
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": question},
+        ]
+
     if verbose:
+        turn_no = 1 + (sum(1 for m in history if m.get("role") == "user") if history else 0)
+        n_hist = len(history) if history else 0
         print(sep)
+        print(f"  第{turn_no}轮对话(历史{n_hist}条消息)")
         print(f"  用户: {question}")
         print(sep)
-
-    system_prompt = (
-        "你是技术文档问答助手。工具说明:\n"
-        "- search: 从知识库检索文档片段。调用时传入最相关的查询词。\n"
-        "- direct_answer: 不需要检索,直接回答。\n\n"
-        "核心规则:\n"
-        "1. 收到问题后,如果与知识库相关,先调用 search 检索一次。\n"
-        "2. 收到 search 结果后,你必须立即基于结果组织回答并直接输出,不要再调任何工具。\n"
-        "3. 如果问题简单/与知识库无关,用 direct_answer 直接回答。\n"
-        "4. 严格限制:每次对话最多调用一次 search。"
-    )
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": question},
-    ]
 
     for iteration in range(1, max_iterations + 1):
         # 1. LLM 决策(带上消息历史 + 可用工具)
@@ -182,7 +242,7 @@ def run(question: str, max_iterations: int = 5, verbose: bool = True) -> str:
                 print(sep)
                 print(f"  AI: {answer}")
                 print(sep)
-            return answer
+            return answer, _build_history(history, question, answer, max_turns)
 
         # ① LLM 说"我要调工具" → 逐个执行并回注
         # 先把 assistant 消息(含 tool_calls)加入历史
@@ -231,5 +291,7 @@ def run(question: str, max_iterations: int = 5, verbose: bool = True) -> str:
         )
         messages.append({"role": "user", "content": fallback_prompt})
         response = chat(messages, tools=None)
-        return response.choices[0].message.content or ""
-    return f"(已达最大轮次{max_iterations},无检索结果可参考)"
+        answer = response.choices[0].message.content or ""
+        return answer, _build_history(history, question, answer, max_turns)
+    answer = f"(已达最大轮次{max_iterations},无检索结果可参考)"
+    return answer, _build_history(history, question, answer, max_turns)

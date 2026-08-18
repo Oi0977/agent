@@ -78,7 +78,7 @@ src/agent_project/
 | ④ 检索:FAISS 哲学/双产物 | docs/架构详解/04 |
 | ⑤ 重排:交叉编码器/两段式/实证 | docs/架构详解/05 |
 | ⑥ 生成:prompt 设计/薄抽象 | docs/架构详解/06 |
-| ⑦ Agent 循环:while+tool_calls/tool-call loop/框架选型 | docs/架构详解/07 |
+| ⑦ Agent 循环:while+tool_calls/tool-call loop/多轮记忆/框架选型 | docs/架构详解/07 |
 | 功能行为契约(SDD) | [docs/specs/](docs/specs/README.md) |
 | 开发流程与环境铁律 | 仓库根 CLAUDE.md |
 
@@ -87,6 +87,7 @@ src/agent_project/
 ```
 ✅ RAG 全链路(解析→分块→嵌入→混合检索→精排→生成)
 ✅ Agent 初版(裸写 while + tool_calls,LLM 自主决策)
+✅ 多轮对话记忆(轮间压缩 + 窗口截断,SPEC-004)
     │
     ▼
 【下一步】LangGraph 生产级 Agent(状态机+条件分支+持久化)
@@ -117,6 +118,16 @@ meta_path = next(pm.OUTPUT_DIR.glob("*.json"))
 
 result = rag_answer("Wireshark 里怎么解密 HTTPS 流量?", index_path, meta_path, k=3)
 print(result["answer"])
+```
+
+### 多轮对话(Agent + 记忆)
+
+```python
+from agent_project.agent import run
+
+ans1, hist = run("Wireshark 怎么解密 HTTPS 流量?")
+ans2, hist = run("你说的第二步在哪个菜单打开?", history=hist)  # 追问依赖第 1 轮
+print(ans2)
 ```
 
 ### 完整流程(重新建库)
@@ -151,4 +162,4 @@ python -m agent_project.main
 ---
 
 *文档分工:specs 管"该怎样"(契约),架构详解管"怎么实现"(机制),本 README 是入口。
-当前版本对应:RAG 六段完成(解析→分块→嵌入→粗排→精排→生成)。*
+当前版本对应:RAG 六段 + Agent 循环 + 多轮对话记忆(SPEC-004)完成。*

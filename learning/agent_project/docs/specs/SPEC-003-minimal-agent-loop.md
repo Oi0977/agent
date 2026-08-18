@@ -109,3 +109,9 @@ LLM 每轮输出两个可能之一:①"我要调某个工具"(返回 tool_calls)
 - **GLM-4.7-flash function calling 兼容性**:完全兼容 OpenAI SDK 的 tools/tool_calls
   协议,无需任何适配层
 - **max_retries=5(指数退避)**加到 chat():免费模型 429 限流偶发,重试可扛
+
+## 修订记录
+
+- 2026-08-18 修订:`run()` 返回值由 `str` 变更为 `(answer, history)`,新增 `history`/`max_turns`
+  参数(多轮对话记忆,见 SPEC-004)。循环机制本身不变;Won't 项"不做持久化会话记忆"
+  拆解为:进程内轮间记忆已由 SPEC-004 实现,磁盘持久化仍不做。

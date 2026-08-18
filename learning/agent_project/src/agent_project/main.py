@@ -93,3 +93,17 @@ if __name__ == "__main__":
     print("-" * 50)
     print("回答:")
     print(result["answer"])
+
+    # ========== 阶段六:Agent 循环 + 多轮记忆(SPEC-003/004)==========
+    import time
+
+    from agent_project.agent import run as agent_run
+
+    print("\n" + "=" * 50)
+    print(">>> 阶段六:Agent 循环(自主决策)+ 多轮记忆(第 2 轮追问依赖第 1 轮)...")
+    ans1, hist = agent_run("Wireshark 怎么解密 HTTPS 流量?")
+    print(f"\n第1轮答案(前80字): {ans1[:80]}")
+    time.sleep(3)  # 免费模型 429 限流,轮间稍隔
+    ans2, _ = agent_run("你说的第二步里的 SSL 协议设置,具体在哪个菜单打开?", history=hist)
+    print(f"\n第2轮追问答案(前80字): {ans2[:80]}")
+    print("(完整验收记录见 SPEC-004 实现备注;离线单测见 tests/test_history.py)")
