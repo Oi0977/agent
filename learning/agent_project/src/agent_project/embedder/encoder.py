@@ -19,15 +19,33 @@ _model = None
 _QUERY_INSTRUCTION = "为这个句子生成表示以用于检索相关文章："
 
 
+def _resolve_model_path() -> str:
+    """
+    直接解析出本地模型快照目录。
+
+    裸机制:HuggingFace 缓存结构是
+      S:/huggingface_cache/models--BAAI--bge-small-zh-v1.5/snapshots/<hash>/
+    这个 <hash> 目录就是"模型本体"(config.json / 模型权重 / tokenizer 全在里面)。
+
+    把这个目录路径直接喂给 SentenceTransformer:
+    库发现是本地路径,根本不走任何 huggingface_hub 逻辑,
+    不管什么版本(5.6/4.x/3.x)都不会联网 —— 彻底免疫版本行为差异。
+    """
+    from pathlib import Path
+    base = Path(r"S:\huggingface_cache\models--BAAI--bge-small-zh-v1.5\snapshots")
+    if base.exists():
+        snaps = sorted(base.iterdir())
+        if snaps:
+            return str(snaps[0])
+    return "BAAI/bge-small-zh-v1.5"  # 无本地缓存时退回 repo-id(需联网)
+
+
 def _get_model():
-    """懒加载模型单例(首次调用才下载/加载,之后复用)。"""
+    """懒加载模型单例(首次调用才加载,之后复用)。"""
     global _model
     if _model is None:
         from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer(
-            'BAAI/bge-small-zh-v1.5',
-            cache_folder=r"S:\huggingface_cache",
-        )
+        _model = SentenceTransformer(_resolve_model_path())
     return _model
 
 

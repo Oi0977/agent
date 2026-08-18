@@ -76,3 +76,20 @@ if __name__ == "__main__":
         for hit in search(q, index_path, meta_path, k=3):
             preview = hit["chunk"][:60].replace("\n", " ")
             print(f"  [score={hit['score']:.4f}] {preview}...")
+
+    # ========== 阶段四:生成(RAG 问答,含精排)==========
+    from agent_project.generator import rag_answer
+
+    print("\n" + "=" * 50)
+    print(">>> 阶段四:RAG 问答(粗排召回 + 精排重排 + 生成)...")
+    q = "Wireshark 里怎么解密 HTTPS 流量?"
+    result = rag_answer(q, index_path, meta_path, k=3, recall_k=20)
+    print(f"问题: {q}")
+    print("-" * 50)
+    print("精排后引用的文档块:")
+    for i, hit in enumerate(result["hits"], 1):
+        preview = hit["chunk"][:50].replace("\n", " ")
+        print(f"  【{i}】rerank={hit['rerank_score']:.4f} | {preview}...")
+    print("-" * 50)
+    print("回答:")
+    print(result["answer"])

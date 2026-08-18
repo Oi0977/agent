@@ -12,13 +12,30 @@
 ai_agent/
 └── learning/                  # learning 目录下的项目共用 conda learning 环境
     └── agent_project/         # 当前主要项目
-        ├── src/
-        │   ├── main.py        # 文档解析入口（按扩展名分派到对应解析器）
-        │   └── preprocessor/
-        │       └── document_parser/   # 文档解析模块（pdf / md 等）
-        ├── data/
+        ├── src/agent_project/
+        │   ├── main.py        # 演示入口（各阶段验收）
+        │   ├── preprocessor/  # 【阶段1】文档解析（pdf/md 自适应）
+        │   ├── chunker/       # 【阶段1】文本分块
+        │   ├── embedder/      # 【阶段2】向量嵌入（BGE）
+        │   ├── retriever/     # 【阶段3】粗排检索（FAISS）
+        │   ├── reranker/      # 【阶段5】精排重排（cross-encoder）
+        │   └── generator/     # 【阶段4】LLM 生成（智谱 API）
+        ├── docs/specs/        # SDD 契约库（见「开发流程」）
+        ├── tests/             # 可重复运行的验收测试（AC 的长期形态）
+        ├── data/              # data/output/ 存向量库产物（不入库）
         └── logs/
 ```
+
+项目学习文档:`learning/agent_project/docs/架构详解/00-总览与导读.md`（各模块机制/代码走读/踩坑/业界对照,按模块分篇）;项目入口与运行见 `learning/agent_project/README.md`。
+
+## 开发流程（SDD，务必遵守）
+
+规范全文见 `learning/agent_project/docs/specs/README.md`。硬约束：
+
+1. **接到任何行为改动需求（含 bug fix），先 `grep -ri <关键词> learning/agent_project/docs/specs/`**
+   查相关契约；查到 → 更新该 spec，查不到 → 新建 `SPEC-NNN`。
+2. **spec 状态 ≠ ✅已确认 时，不改 `src/agent_project/` 核心代码**（先写 spec、人确认、再实现）。
+3. 实现完：spec 状态改 ✔已验收 + 勾 AC + 同步 README 机制解读；失败时如实报告，不宣称完成。
 
 ## 文档解析模块（自适应架构）
 
