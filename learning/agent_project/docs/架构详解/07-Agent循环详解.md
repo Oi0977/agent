@@ -260,7 +260,28 @@ execute_tool(name, arguments)  # → 统一分发;任何失败转字符串回注
 精排失败退回 RRF 序(不中断)。教训一句话:**跨文档融合的排序仅供参考,
 精排才是最终裁判**。
 
-## 9. Q&A 自测
+## 9. 会话终端:Agent 的"身体"(SPEC-007)
+
+`python -m agent_project.chat` —— REPL 持续对话,历史跨轮(SPEC-004)、
+token 统计每轮可见(SPEC-006)、会话存取 `/save` `/load`(JSON 落 `data/sessions/`)。
+
+**核心设计:三个注入点让 REPL 完全离线可测**:
+
+```python
+chat_loop(read=input, write=print, run=None)
+#        ↑输入   ↑输出      ↑问答函数(默认 agent.run)
+```
+
+测试注入脚本序列 + mock run + 输出收集器(tests/test_chat.py)——**可测试性
+靠依赖注入,不靠终端模拟**。mock run 还能精确捕获"收到的 history",
+从而把 `/load 恢复的就是保存前的列表"这种断言写成硬校验。
+知识库探测只在真实模式执行(run 未注入时),离线测试不拖 jieba/模型导入。
+
+**真机观察**:带历史时"最多一次 search"的提示约束明显更弱(连搜 5 次触发
+max_iterations)——兜底机制按设计介入,基于已有资料作答且如实声明资料不含
+答案(不编造)。提示是软约束,兜底是硬保险,两者缺一不可。
+
+## 10. Q&A 自测
 
 ### Q1 · Agent 和 RAG 的本质区别是什么?RAG 是 Agent 吗?
 **难度: 基础** · 考点: 概念区分

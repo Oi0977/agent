@@ -91,6 +91,9 @@ src/agent_project/
 ✅ RAG 全链路(解析→分块→嵌入→混合检索→精排→生成)
 ✅ Agent 初版(裸写 while + tool_calls,LLM 自主决策)
 ✅ 多轮对话记忆(轮间压缩 + 窗口截断,SPEC-004)
+✅ 多文档知识库 + 工具注册表 + 入库命令(SPEC-005)
+✅ Token 记账与上下文预算(SPEC-006)
+✅ 交互式会话终端 + 会话持久化(SPEC-007)
     │
     ▼
 【下一步】LangGraph 生产级 Agent(状态机+条件分支+持久化)
@@ -115,6 +118,14 @@ Agent 框架选型到 Agent 阶段再评估(LangGraph 状态机式编排是届�
 python -m agent_project.ingest 你的文档.pdf 另一份.md   # 入库(同名覆盖)
 python -m agent_project.ingest --list                  # 列出已入库文档
 ```
+
+### 交互式会话终端
+
+```bash
+python -m agent_project.chat    # 持续多轮对话;每轮显示 token 统计
+```
+
+会话内命令:`/new` 新会话 · `/save [名]` 保存 · `/load <名>` 载入 · `/list` 列已存会话 · `/exit` 退出。
 
 ### 快速验证(复用已有索引)
 
