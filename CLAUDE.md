@@ -19,7 +19,8 @@ ai_agent/
         │   ├── embedder/      # 【阶段2】向量嵌入（BGE）
         │   ├── retriever/     # 【阶段3】粗排检索（FAISS）
         │   ├── reranker/      # 【阶段5】精排重排（cross-encoder）
-        │   └── generator/     # 【阶段4】LLM 生成（智谱 API）
+        │   ├── generator/     # 【阶段4】LLM 生成（智谱 API）
+        │   └── agent/         # 【阶段6】Agent 循环（LLM 自主决策）
         ├── docs/specs/        # SDD 契约库（见「开发流程」）
         ├── tests/             # 可重复运行的验收测试（AC 的长期形态）
         ├── data/              # data/output/ 存向量库产物（不入库）
@@ -30,12 +31,28 @@ ai_agent/
 
 ## 开发流程（SDD，务必遵守）
 
-规范全文见 `learning/agent_project/docs/specs/README.md`。硬约束：
+规范全文见 `learning/agent_project/docs/specs/README.md`。**闭环七步，每步都有明确产物：**
 
-1. **接到任何行为改动需求（含 bug fix），先 `grep -ri <关键词> learning/agent_project/docs/specs/`**
-   查相关契约；查到 → 更新该 spec，查不到 → 新建 `SPEC-NNN`。
-2. **spec 状态 ≠ ✅已确认 时，不改 `src/agent_project/` 核心代码**（先写 spec、人确认、再实现）。
-3. 实现完：spec 状态改 ✔已验收 + 勾 AC + 同步 README 机制解读；失败时如实报告，不宣称完成。
+```
+0. grep 防重     → grep docs/specs/ 查相关契约
+1. 写 spec       → docs/specs/SPEC-NNN-短名.md（📝草稿）
+2. 人确认方案     → spec 改 ✅已确认（门禁通过，可动代码）
+3. 实现 + 写测试  → src/ 下写代码 + tests/ 下写验收脚本
+4. 逐条验收       → 验收脚本跑通 + AC 核对
+5. 同步收尾       → 以下六件事同一次提交完成：
+   a. spec 状态改 ✔已验收，逐条勾 AC，回填实现备注
+   b. docs/specs/README.md 回溯清单更新（如适用）
+   c. 新模块 → docs/架构详解/ 新增对应编号文档（01-07 按需）
+   d. docs/架构详解/00-总览与导读.md 模块表 + 阅读路线同步
+   e. README.md 文档索引 + 路线图同步
+   f. CLAUDE.md 项目结构树同步（如新增/移动目录）
+6. git commit    → Conventional Commits 格式提交
+```
+
+**硬约束（铁律）：**
+- spec 状态 ≠ ✅已确认 时，**严禁**改 `src/agent_project/` 核心代码
+- 步骤5 的六件事（a-f）**缺一不可**，每次都有遗漏的教训
+- 验收脚本跑不通 / AC 未核对 / 有跳过的步骤，**不得宣称完成，必须如实报告**
 
 ## 文档解析模块（自适应架构）
 
