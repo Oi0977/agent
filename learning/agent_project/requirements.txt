@@ -1,0 +1,27 @@
+# agent_project 直接依赖(conda learning 环境,2026-08-19 实测版本)
+# 注意:faiss/jieba/rank_bm25/langchain-text-splitters/openai 装自 conda-forge,
+# pip 装同名包亦可;版本号为当前实测可用组合,升级前先跑 tests/ 回归。
+#
+# 文档解析(阶段1)
+pdfplumber==0.11.10
+rapidocr-onnxruntime==1.4.4          # OCR 降级(PaddleOCR 模型 + ONNX 推理,不装 paddlepaddle)
+onnxruntime==1.27.0
+opencv-python==5.0.0.93              # rapidocr 依赖
+
+# 嵌入/重排(阶段2/5,本地模型缓存于 S:\huggingface_cache)
+sentence-transformers==5.6.1
+transformers==5.14.1
+huggingface_hub==1.24.0
+torch==2.13.0
+
+# 分块/检索(阶段1/3)
+langchain-text-splitters==1.1.0      # 项目唯一引入的 langchain 组件
+faiss-cpu==1.14.1
+rank_bm25==0.2.2
+jieba==0.42.1
+
+# 生成(阶段4,智谱 GLM 走 OpenAI 兼容接口)
+openai==2.53.0
+
+# 基础
+numpy==2.5.1
