@@ -97,7 +97,49 @@ chunk_size=500 字符就是给 BGE 的 512 token 上限留余量,按"中文≈1�
 
 ## 4. 代码走读(SPEC-006 落地)
 
-*(SPEC-006 实现后回填:`_estimate_tokens` 启发式、`_build_history` 预算截断、会话统计。)*
+三层各对应一段代码(全在 `agent/agent.py`):
+
+**① 记账(真数)**——每次 `chat()` 后捕获 API 白送的 usage:
+
+```python
+def _record_usage(response):
+    usage = getattr(response, "usage", None)     # 防御:兼容层可能不返回
+    ...
+    stats["prompt_tokens"] += p or 0             # 本轮各次调用累计
+```
+
+verbose 效果(2026-08-19 真机两轮实测):
+
+```
+第1轮: [token] prompt 621 / completion 70     ← system+问题
+       → search(...)                          ← 工具回注 ≈ +800 tok
+       [token] prompt 1417 / completion 403
+第2轮: [token] 历史重发约 591 tok(估算,预算 8192)
+       [token] prompt 939 / completion 64     ← 621+历史重发 318(真数)
+       [token] prompt 1707 / ...              ← 又一次工具结果叠加
+       [token] prompt 2462 / completion 365
+```
+
+读数即结论:**轮内成本大头是工具结果回注(+800),轮间成本是历史重发(+318)**
+——这就是 SPEC-004"轮间压缩丢弃 tool 消息"省的钱。
+
+**② 估算(事前)**——纯函数,预算决策用:
+
+```python
+def _estimate_tokens(text):
+    cjk = sum(1 for ch in text if "一" <= ch <= "鿿")   # 中文≈1字1token
+    return cjk + (len(text) - cjk + 3) // 4              # 其余≈4字符/token
+```
+
+**③ 预算闸**——`_build_history` 双闸截断(max_turns 切完再切 token):
+
+```python
+while len(pairs) > 1 and _pairs_tokens(pairs) > max_history_tokens:
+    pairs = pairs[1:]        # 从最旧轮整对丢弃;system 不计不丢;至少留最近 1 轮
+```
+
+`run()` 返回三元组 `(answer, history, stats)`,stats 含
+`llm_calls / tool_calls / prompt_tokens / completion_tokens / history_turns`。
 
 ## 5. 设计决策与理由
 
@@ -114,7 +156,16 @@ chunk_size=500 字符就是给 BGE 的 512 token 上限留余量,按"中文≈1�
 
 ## 6. 踩坑记录
 
-*(SPEC-006 实现后回填。)*
+- **★ 启发式偏保守约 1.9 倍(实测校准)**:历史估算 591 tok vs API 实际重发 318 tok。
+  原因:GLM-4.7 的中文优化词表会把常用词合并成单 token("流量""协议"≈1 token/词),
+  实际 < 1字1token。对**预算**用途是安全方向(宁可提前截断,不会超限);
+  **记账**用 API 真数,不受影响。换模型必须重校准比率——这就是 §5 决策 2
+  "启发式是分词器相对的"的实测证据。
+- **chat 模板开销真实存在**:估算只算 content,角色标记/特殊符号不计,
+  所以估算天然略低于实际 prompt(上面 591 vs 318 是反方向,因为词表合并更强)。
+  两股偏差方向相反,预算阈值留余量即可,不必精修。
+- **usage 防御**:个别 OpenAI 兼容层可能不返回 usage → `getattr` 判空记 0 并提示,
+  不炸主流程(智谱 GLM-4.7-flash 实测稳定返回)。
 
 ## 7. 业界选型与取舍
 

@@ -17,6 +17,29 @@ import json
 from agent_project.agent.tools import execute_tool, get_tool_schemas
 from agent_project.generator.llm_client import chat
 
+# ========== Token 估算(SPEC-006)==========
+
+def _estimate_tokens(text: str) -> int:
+    """
+    粗估 token 数(纯函数,离线可测)。
+
+    启发式(理论见详解 08):GLM 是中文优化词表 → 中文≈1字1token;
+    非中文(英文/数字/符号)≈4字符/token。误差 ±20~30%,只用于发送前的
+    预算决策;**记账以 API 返回的 usage 为准(真数)**。
+    注意:该比率是"中文优化词表"相对的 —— 换老英文词表模型(字节回退)即失准。
+    """
+    if not text:
+        return 0
+    cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
+    other = len(text) - cjk
+    return cjk + (other + 3) // 4
+
+
+def _messages_tokens(messages) -> int:
+    """一组 messages 的估算 token 数(只算 content;聊天模板开销不计,见 08 §3.2)。"""
+    return sum(_estimate_tokens(m.get("content") or "") for m in messages)
+
+
 # ========== 轮间记忆(SPEC-004)==========
 
 SYSTEM_PROMPT = (
@@ -33,20 +56,27 @@ SYSTEM_PROMPT = (
 )
 
 
-def _build_history(prev, question, answer, max_turns=10):
+def _build_history(prev, question, answer, max_turns=10, max_history_tokens=8192):
     """
-    轮间历史构造(纯函数,可离线单测 —— SPEC-004 AC2/AC5 的落点)。
+    轮间历史构造(纯函数,可离线单测 —— SPEC-004 AC2/AC5、SPEC-006 AC2/AC5 的落点)。
 
     轮内工作列表(含 assistant 的 tool_calls 意图与 tool 结果)用完即弃,从不进入历史:
     一次 search 回注约 2500 字符,是历史体积的大头;压成 [user, assistant] 原子对后,
-    窗口截断只需按对切片,永不拆散 OpenAI 协议要求的 tool_calls/tool 配对。
+    截断只需按对切片,永不拆散 OpenAI 协议要求的 tool_calls/tool 配对。
+
+    双闸截断(SPEC-006):
+    - max_turns:轮数闸(防"轮数多但都短"的会话无限长)
+    - max_history_tokens:token 预算闸(防"单轮超长"撑爆预算)—— 拼接本轮后
+      若估算超预算,从最旧轮开始整对丢弃;system 固定开销不计入预算、永不丢;
+      至少保留最近 1 轮(哪怕它自身超预算)
 
     :param prev: 上一轮返回的压缩历史([system] + N 个 [user, assistant] 对);首轮传 None
     :param question: 本轮原始问题。显式传入而非从工作列表提取 ——
         兜底路径中追加的是 fallback prompt,不是用户的原始问题
     :param answer: 本轮最终答案(正常回答或兜底答案)
     :param max_turns: 最多保留的轮数(system 不计)
-    :return: [system] + 最近 ≤max_turns 个 [user, assistant] 对
+    :param max_history_tokens: 历史问答对的 token 预算(估算值)
+    :return: [system] + 截断后的 [user, assistant] 对
     """
     if prev:
         system = [dict(m) for m in prev if m.get("role") == "system"]
@@ -62,6 +92,14 @@ def _build_history(prev, question, answer, max_turns=10):
     if len(pairs) > max_turns:
         pairs = pairs[-max_turns:]
 
+    # token 预算闸:超预算从最旧轮整对丢弃(估算只看问答对内容,system 不计)
+    def _pairs_tokens(pl):
+        return sum(_estimate_tokens(u.get("content") or "")
+                   + _estimate_tokens(a.get("content") or "") for u, a in pl)
+
+    while len(pairs) > 1 and _pairs_tokens(pairs) > max_history_tokens:
+        pairs = pairs[1:]
+
     history = list(system)
     for u, a in pairs:
         history.append({"role": "user", "content": u.get("content") or ""})
@@ -72,20 +110,24 @@ def _build_history(prev, question, answer, max_turns=10):
 # ========== Agent 主循环 ==========
 
 def run(question: str, history=None, max_iterations: int = 5,
-        max_turns: int = 10, verbose: bool = True) -> tuple:
+        max_turns: int = 10, max_history_tokens: int = 8192,
+        verbose: bool = True) -> tuple:
     """
-    最小 Agent 循环 + 多轮记忆:LLM 自主决策调工具→结果回注→循环直到给出答案。
+    最小 Agent 循环 + 多轮记忆 + token 记账:LLM 自主决策调工具→结果回注→循环直到给出答案。
 
-    返回 (答案, 压缩历史),调用方持有历史跨轮传递:
-        ans1, hist = run("第一个问题")
-        ans2, hist = run("针对答案的追问", history=hist)   ← 这就是"记忆"
+    返回 (答案, 压缩历史, 本轮统计),调用方持有历史跨轮传递:
+        ans1, hist, st1 = run("第一个问题")
+        ans2, hist, st2 = run("针对答案的追问", history=hist)   ← 这就是"记忆"
 
     :param question: 用户问题
     :param history: 上一轮返回的压缩历史;None/空列表 = 新会话(SPEC-003 行为)
     :param max_iterations: 单轮内 Agent 循环最大轮次(防无限循环)
     :param max_turns: 返回历史最多保留的对话轮数(system 不计)
-    :param verbose: 是否打印每轮决策过程
-    :return: (answer, history) —— history 可直接作为下一轮的 history 参数
+    :param max_history_tokens: 历史 token 预算(估算);超出从最旧轮整对丢弃(SPEC-006)
+    :param verbose: 是否打印每轮决策过程与 token 统计
+    :return: (answer, history, stats)
+        stats = {"llm_calls", "tool_calls", "prompt_tokens",
+                 "completion_tokens", "history_turns"}(本轮各 LLM 调用的 usage 之和)
     """
     TOOLS = get_tool_schemas()
 
@@ -106,12 +148,43 @@ def run(question: str, history=None, max_iterations: int = 5,
         n_hist = len(history) if history else 0
         print(sep)
         print(f"  第{turn_no}轮对话(历史{n_hist}条消息)")
+        if history:
+            print(f"  [token] 历史重发约 {_messages_tokens(history)} tok"
+                  f"(估算,预算 {max_history_tokens})")
         print(f"  用户: {question}")
         print(sep)
+
+    # ---- token 记账(SPEC-006):每次 LLM 调用捕获 API 白送的 usage ----
+    stats = {"llm_calls": 0, "tool_calls": 0, "prompt_tokens": 0,
+             "completion_tokens": 0, "history_turns": 0}
+
+    def _record_usage(response):
+        """记一次调用的 usage;个别兼容层不返回 usage 时记 0 并提示,不炸主流程。"""
+        usage = getattr(response, "usage", None)
+        p = getattr(usage, "prompt_tokens", None) if usage else None
+        c = getattr(usage, "completion_tokens", None) if usage else None
+        if p is None and c is None:
+            if verbose:
+                print("    [token] ⚠ 本次响应未携带 usage,记账记 0")
+            return
+        stats["llm_calls"] += 1
+        stats["prompt_tokens"] += p or 0
+        stats["completion_tokens"] += c or 0
+        if verbose:
+            print(f"    [token] prompt {p or 0} / completion {c or 0}"
+                  f"(本轮累计 {stats['prompt_tokens']}/{stats['completion_tokens']})")
+
+    def _finish(answer):
+        """统一出口:构造压缩历史 + 回填统计,返回三元组。"""
+        new_history = _build_history(history, question, answer,
+                                     max_turns, max_history_tokens)
+        stats["history_turns"] = sum(1 for m in new_history if m.get("role") == "user")
+        return answer, new_history, stats
 
     for iteration in range(1, max_iterations + 1):
         # 1. LLM 决策(带上消息历史 + 可用工具)
         response = chat(messages, tools=TOOLS)
+        _record_usage(response)
         choice = response.choices[0]
         msg = choice.message
 
@@ -126,7 +199,7 @@ def run(question: str, history=None, max_iterations: int = 5,
                 print(sep)
                 print(f"  AI: {answer}")
                 print(sep)
-            return answer, _build_history(history, question, answer, max_turns)
+            return _finish(answer)
 
         # ① LLM 说"我要调工具" → 逐个执行并回注
         # 先把 assistant 消息(含 tool_calls)加入历史
@@ -137,6 +210,7 @@ def run(question: str, history=None, max_iterations: int = 5,
             print(f"\n  [轮次{iteration}] LLM 决定:调用工具 {names}")
 
         for tc in tool_calls:
+            stats["tool_calls"] += 1
             fn_name = tc.function.name
             try:
                 fn_args = json.loads(tc.function.arguments)
@@ -175,7 +249,8 @@ def run(question: str, history=None, max_iterations: int = 5,
         )
         messages.append({"role": "user", "content": fallback_prompt})
         response = chat(messages, tools=None)
+        _record_usage(response)
         answer = response.choices[0].message.content or ""
-        return answer, _build_history(history, question, answer, max_turns)
+        return _finish(answer)
     answer = f"(已达最大轮次{max_iterations},无检索结果可参考)"
-    return answer, _build_history(history, question, answer, max_turns)
+    return _finish(answer)

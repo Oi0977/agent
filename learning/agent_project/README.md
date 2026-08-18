@@ -130,14 +130,14 @@ result = rag_answer("Wireshark 里怎么解密 HTTPS 流量?", index_path, meta_
 print(result["answer"])
 ```
 
-### 多轮对话(Agent + 记忆)
+### 多轮对话(Agent + 记忆 + token 记账)
 
 ```python
 from agent_project.agent import run
 
-ans1, hist = run("Wireshark 怎么解密 HTTPS 流量?")
-ans2, hist = run("你说的第二步在哪个菜单打开?", history=hist)  # 追问依赖第 1 轮
-print(ans2)
+ans1, hist, st1 = run("Wireshark 怎么解密 HTTPS 流量?")
+ans2, hist, st2 = run("你说的第二步在哪个菜单打开?", history=hist)  # 追问依赖第 1 轮
+print(ans2, st2)   # st2 含 prompt/completion token 统计(SPEC-006)
 ```
 
 ### 完整流程(重新建库)
