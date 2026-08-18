@@ -78,22 +78,21 @@ src/agent_project/
 | ④ 检索:FAISS 哲学/双产物 | docs/架构详解/04 |
 | ⑤ 重排:交叉编码器/两段式/实证 | docs/架构详解/05 |
 | ⑥ 生成:prompt 设计/薄抽象 | docs/架构详解/06 |
+| ⑦ Agent 循环:while+tool_calls/tool-call loop/框架选型 | docs/架构详解/07 |
 | 功能行为契约(SDD) | [docs/specs/](docs/specs/README.md) |
 | 开发流程与环境铁律 | 仓库根 CLAUDE.md |
 
 ## 五、从 RAG 到 Agent 的路线图
 
 ```
-当前状态(RAG + 混合检索 + Rerank 完成)
+✅ RAG 全链路(解析→分块→嵌入→混合检索→精排→生成)
+✅ Agent 初版(裸写 while + tool_calls,LLM 自主决策)
     │
     ▼
-【下一步】把 search 包装成 Agent 工具(工具 schema + LLM 自主决策)
+【下一步】LangGraph 生产级 Agent(状态机+条件分支+持久化)
     │
     ▼
-【Agent 阶段】llm_client 扩展为支持 tool_calls 的循环
-    │
-    ▼
-【最终形态】多轮对话 Agent(检索 + 生成 + 记忆 + 工具调用)
+【最终形态】多轮对话 Agent(检索 + 生成 + 记忆 + 工具调用 + 人工介入)
 ```
 
 Agent 框架选型到 Agent 阶段再评估(LangGraph 状态机式编排是届时主要候选),
