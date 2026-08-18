@@ -22,7 +22,8 @@ ai_agent/
         │   ├── retriever/     # 【阶段3】粗排检索（FAISS）
         │   ├── reranker/      # 【阶段5】精排重排（cross-encoder）
         │   ├── generator/     # 【阶段4】LLM 生成（智谱 API）
-        │   └── agent/         # 【阶段6】Agent 循环（LLM 自主决策 + 多轮记忆）
+        │   ├── agent/         # 【阶段6】Agent 循环（LLM 自主决策 + 多轮记忆,裸写版）
+        │   └── agent_langgraph/ # 【SPEC-009】LangGraph 等价重写（只换编排层,与裸写版并存对比）
         ├── docs/specs/        # SDD 契约库（见「开发流程」）
         ├── tests/             # 可重复运行的验收测试（AC 的长期形态）
         ├── data/              # data/output/ 存向量库产物（不入库）

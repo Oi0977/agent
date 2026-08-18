@@ -18,6 +18,7 @@
 | 向量检索 | FAISS IndexFlatIP | 只存向量、精确暴力搜索,机制透明 |
 | 重排序 | BGE bge-reranker-base(本地) | 交叉编码器精排,业界 RAG 标配 |
 | LLM 生成 | 智谱 GLM-4.7-flash(远程 API) | 免费、中文好、OpenAI 兼容接口 |
+| Agent 编排 | 裸写 while(主)+ LangGraph(对照) | 先看清机制,再用框架对照出"框架提供了什么" |
 
 ## 二、模型资产(统一缓存在 `S:\huggingface_cache`)
 
@@ -66,7 +67,8 @@ src/agent_project/
 ├── retriever/         # 【阶段3】检索(单文档混合 + 多文档 2×D 路 RRF)
 ├── reranker/          # 【阶段5】精排重排(cross-encoder)
 ├── generator/         # 【阶段4】LLM 生成(智谱 API)
-└── agent/             # 【阶段6】Agent 循环 + 多轮记忆 + 工具注册表
+├── agent/             # 【阶段6】Agent 循环 + 多轮记忆 + 工具注册表(裸写版)
+└── agent_langgraph/   # 【SPEC-009】LangGraph 等价重写(只换编排层,与裸写版并存)
 ```
 
 ## 四、文档索引
@@ -82,6 +84,8 @@ src/agent_project/
 | ⑥ 生成:prompt 设计/薄抽象 | docs/架构详解/06 |
 | ⑦ Agent 循环:while+tool_calls/tool-call loop/多轮记忆/框架选型 | docs/架构详解/07 |
 | ⑧ Token 与上下文预算:token 原理/usage/估算与预算 | docs/架构详解/08 |
+| ⑨ LangGraph 重写:State/reducer/条件边/checkpointer/interrupt | docs/架构详解/09 |
+| ⑩ 裸写 vs LangGraph:逐机制对照+同题实测+选型建议 | docs/架构详解/10 |
 | 功能行为契约(SDD) | [docs/specs/](docs/specs/README.md) |
 | 开发流程与环境铁律 | 仓库根 CLAUDE.md |
 
@@ -95,16 +99,17 @@ src/agent_project/
 ✅ Token 记账与上下文预算(SPEC-006)
 ✅ 交互式会话终端 + 会话持久化(SPEC-007)
 ✅ 评测基线(金标集 + hit@3/MRR + LLM-judge,SPEC-008)
+✅ LangGraph 等价重写 + 两版对比(SPEC-009,双版并存)
     │
     ▼
-【下一步】LangGraph 生产级 Agent(状态机+条件分支+持久化)
+【下一步】生产化:token 级流式 / Web UI / 向量数据库(过滤/增量)
     │
     ▼
 【最终形态】多轮对话 Agent(检索 + 生成 + 记忆 + 工具调用 + 人工介入)
 ```
 
-Agent 框架选型到 Agent 阶段再评估(LangGraph 状态机式编排是届时主要候选),
-现在裸写的目的是先理解机制。
+Agent 框架结论(SPEC-009 对比后):编排复杂到"分支多/要人审/要断点恢复"
+时值得上 LangGraph;简单循环裸写更透明。详见详解 10。
 
 ## 六、运行指南
 
@@ -167,6 +172,19 @@ ans2, hist, st2 = run("你说的第二步在哪个菜单打开?", history=hist) 
 print(ans2, st2)   # st2 含 prompt/completion token 统计(SPEC-006)
 ```
 
+### LangGraph 版(SPEC-009,记忆在 checkpointer)
+
+```python
+from agent_project.agent_langgraph import run
+
+ans1, st1 = run("Wireshark 怎么解密 HTTPS 流量?", thread_id="t1")
+ans2, st2 = run("你说的第二步在哪个菜单打开?", thread_id="t1")  # 同 thread 即记忆
+```
+
+```bash
+python -m agent_project.agent_langgraph   # 演示四幕:同题对比/多轮记忆/跨进程持久化/流式
+```
+
 ### 完整流程(重新建库)
 
 ```python
@@ -196,8 +214,12 @@ python -m agent_project.main
 | conda 装"小"包后行为大变 | 可能连带升级全家桶,装完回归验证 | 详解03 |
 | 脚本启动慢(~25s) | langchain_text_splitters 首次 import 拖全家,非 bug | 详解04 |
 | 多文档检索小文档抢榜首 | RRF 小文档名次压缩,靠精排纠序(search 工具已两段式) | 详解04§9 |
+| LangGraph 循环上界"少吃一轮" | fallback 判断放 tools 出边(工具执行完再判耗尽) | 详解09 |
+| 离线测试测出"假 bug" | fake 替身要遵循真实 API 协议语义(tools=None 无 tool_calls) | 详解09 |
+| 0.x 教程 API 对不上 | langgraph 1.x 先跑探针脚本验 API 再写码 | 详解09 |
+| 免费 API 偶发请求挂起 | ReadTimeout 外层重试兜住(429 已有指数退避) | 详解09 |
 
 ---
 
 *文档分工:specs 管"该怎样"(契约),架构详解管"怎么实现"(机制),本 README 是入口。
-当前版本对应:RAG 六段 + Agent 循环 + 多轮对话记忆(SPEC-004)完成。*
+当前版本对应:RAG 六段 + Agent 循环 + 多轮记忆 + 终端 + 评测基线 + LangGraph 对照重写(SPEC-009)完成。*

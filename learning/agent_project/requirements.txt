@@ -23,5 +23,9 @@ jieba==0.42.1
 # 生成(阶段4,智谱 GLM 走 OpenAI 兼容接口)
 openai==2.53.0
 
+# Agent 编排对照重写(SPEC-009;langgraph 1.x 与 0.x 教程 API 差异大,锁定 1.x)
+langgraph==1.0.7
+langgraph-checkpoint-sqlite==3.1.1
+
 # 基础
 numpy==2.5.1

@@ -30,6 +30,8 @@ learning/agent_project/data/cleaned/
 learning/agent_project/data/cache/
 # 会话持久化产物(SPEC-007 终端 /save 落盘的运行时数据,机器本地)
 learning/agent_project/data/sessions/
+# LangGraph checkpointer 运行时产物(SPEC-009,SQLite 状态存档)
+learning/agent_project/data/checkpoints/
 # 运行日志
 learning/agent_project/logs/
 *.log
