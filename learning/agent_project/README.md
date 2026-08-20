@@ -1,225 +1,119 @@
-# agent_project — 从零手写的 RAG 问答系统
+# AI Agent · RAG 全栈学习项目
 
-> 学习目标:不依赖重型框架,裸写 RAG 全链路,理解每个环节的机制;
-> 在此基础上逐步演化为真正的 Agent 系统,最终成为可用的产品。
+从零构建一个**端到端的 RAG（检索增强生成）Agent**，不套框架、逐层手写，覆盖从文档解析到多轮对话的完整链路。
 
-## 一、项目概览
-
-本项目实现了一个完整的 **RAG(检索增强生成)问答系统**:把文档变成可检索的向量库,
-用户提问后系统粗排召回 + 精排重排找到相关内容,交给 LLM 生成忠实于原文的答案。
-
-**技术选型**(刻意选轻量、可理解的组件):
-
-| 环节 | 本项目用的 | 为什么 |
-|---|---|---|
-| 文档解析 | pdfplumber + RapidOCR | 有文本层直接提取,无文本层自动降级 OCR |
-| 文本分块 | langchain-text-splitters | 唯一引入的 langchain 组件,递归字符分割 |
-| 向量嵌入 | BGE bge-small-zh-v1.5(本地) | 中文效果好、512 维、模型小加载快 |
-| 向量检索 | FAISS IndexFlatIP | 只存向量、精确暴力搜索,机制透明 |
-| 重排序 | BGE bge-reranker-base(本地) | 交叉编码器精排,业界 RAG 标配 |
-| LLM 生成 | 智谱 GLM-4.7-flash(远程 API) | 免费、中文好、OpenAI 兼容接口 |
-| Agent 编排 | 裸写 while(主)+ LangGraph(对照) | 先看清机制,再用框架对照出"框架提供了什么" |
-
-## 二、模型资产(统一缓存在 `S:\huggingface_cache`)
-
-所有 HuggingFace 模型统一下载到本机 `S:\huggingface_cache`(**不用**系统默认的
-`C:\Users\...\.cache`)。缓存结构(HuggingFace 标准布局):
+## 架构总览
 
 ```
-S:\huggingface_cache\
-├── models--BAAI--bge-small-zh-v1.5\      ← 嵌入模型(~100MB,双塔 bi-encoder)
-│   └── snapshots\<hash>\                 ← 模型本体(config/权重/tokenizer)
-└── models--BAAI--bge-reranker-base\      ← 重排模型(~1.1GB,交叉编码器 cross-encoder)
-    └── snapshots\<hash>\
+用户提问
+  │
+  ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Agent 循环（LLM 自主决策 · 多轮 · 工具调用 · 记忆）         │
+│  ┌──────────────────────────────────────────────────────────┐│
+│  │ LLM 生成 ◄─── Prompt 组装 ◄─── 上下文压缩 ◄─── 检索结果 ││
+│  │    │                                                   ││
+│  │    ▼                                                   ││
+│  │ 工具调用判断 ──yes──► search 工具 ──► 向量检索 ──┐      ││
+│  │    │                                        │      ││
+│  │    no                                       ▼      ││
+│  │    │              混合检索（向量 + BM25 + RRF）│      ││
+│  │    ▼                                        ▼      ││
+│  │  最终回答 ◄─── 精排重排（Cross-Encoder）     │      ││
+│  └──────────────────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────────┘
 ```
 
-代码加载方式:解析本地快照目录路径直接喂给模型库,**彻底离线**。
-新模型下载方法(国内走 hf-mirror 镜像,需禁用镜像不支持的 Xet 协议):
+## 模块详解
 
-```python
-import os
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-os.environ["HF_HUB_DISABLE_XET"] = "1"
-from huggingface_hub import snapshot_download
-snapshot_download("模型名", cache_dir=r"S:\huggingface_cache")
-```
+| 阶段 | 模块 | 职责 | 核心技术 |
+|------|------|------|----------|
+| 1 | 文档解析 | PDF/Markdown → 纯文本 | pdfplumber + RapidOCR（自适应） |
+| 2 | 文本分块 | 长文本 → 语义完整的块 | 递归字符分割 + 10% 重叠 |
+| 3 | 向量嵌入 | 文本 → 768 维语义向量 | BGE-small-zh-v1.5（ONNX） |
+| 4 | 向量检索 | 问题 → Top-K 相关块 | FAISS + BM25 + RRF 混合检索 |
+| 5 | 精排重排 | 粗排结果 → 精准排序 | Cross-Encoder 逐对打分 |
+| 6 | LLM 生成 | 上下文 + 问题 → 回答 | 智谱 GLM-4 / DeepSeek |
+| 7 | Agent 循环 | 多轮对话 + 工具调用 + 记忆 | 手写 while 循环 |
+| 8 | LangGraph 重写 | 等价重写，对比学习 | StateGraph + Checkpointer |
 
-## 三、架构总览
+## 技术栈
 
-```
-【离线·建库】只需跑一次
-  PDF → ① parse_document 解析 → ② smart_chunk_text 分块
-      → ③ embed_texts 嵌入 → ④ build_index 落盘(.index + .json)
+| 类别 | 选型 | 说明 |
+|------|------|------|
+| 嵌入模型 | BGE-small-zh-v1.5 | 中文 768 维，ONNX 推理，离线免费 |
+| 向量库 | FAISS (IndexFlatIP) | 精确暴力检索，313 块毫秒级 |
+| 精排模型 | bge-reranker-base | 交叉编码器，从 20 候选选 5 |
+| LLM | 智谱 GLM-4-Flash / DeepSeek | 免费 API，支持工具调用 |
+| 文档解析 | pdfplumber + RapidOCR | 文本层直读 + OCR 降级 |
+| 分块 | RecursiveCharacterTextSplitter | langchain-text-splitters（零重依赖） |
+| Agent 框架 | 手写 + LangGraph 1.0.7 | 两种实现并存对比 |
 
-【在线·问答】每次提问都跑
-  问题 → ⑤ embed_query(加BGE前缀) → ⑥ hybrid_search 混合粗排 top-20(向量+BM25+RRF)
-      → ⑦ rerank 精排 top-3 → ⑧ build_prompt → ⑨ chat(LLM)→ 答案
-```
+## 快速开始
 
-```
-src/agent_project/
-├── main.py            # 演示入口(各阶段验收,已有索引则复用)
-├── ingest.py          # 入库命令:python -m agent_project.ingest <文件...> [--list]
-├── path_manager.py    # 统一路径管理
-├── preprocessor/      # 【阶段1】文档解析(pdf/md 自适应)
-├── chunker/           # 【阶段1】文本分块
-├── embedder/          # 【阶段2】向量嵌入(BGE)
-├── retriever/         # 【阶段3】检索(单文档混合 + 多文档 2×D 路 RRF)
-├── reranker/          # 【阶段5】精排重排(cross-encoder)
-├── generator/         # 【阶段4】LLM 生成(智谱 API)
-├── agent/             # 【阶段6】Agent 循环 + 多轮记忆 + 工具注册表(裸写版)
-└── agent_langgraph/   # 【SPEC-009】LangGraph 等价重写(只换编排层,与裸写版并存)
-```
+### 环境要求
 
-## 四、文档索引
+- Python 3.11+（推荐 Anaconda）
+- Windows / Linux / macOS
 
-| 想了解 | 去哪 |
-|---|---|
-| 每个模块的机制/代码走读/踩坑/业界对照 | [docs/架构详解/00-总览与导读.md](docs/架构详解/00-总览与导读.md)(入口,含阅读路线) |
-| ① 解析:文本层/OCR 降级、RapidOCR | docs/架构详解/01 |
-| ② 分块:递归分割/重叠设计 | docs/架构详解/02 |
-| ③ 嵌入:双塔/BGE 前缀/本地加载 | docs/架构详解/03 |
-| ④ 检索:FAISS 哲学/双产物 | docs/架构详解/04 |
-| ⑤ 重排:交叉编码器/两段式/实证 | docs/架构详解/05 |
-| ⑥ 生成:prompt 设计/薄抽象 | docs/架构详解/06 |
-| ⑦ Agent 循环:while+tool_calls/tool-call loop/多轮记忆/框架选型 | docs/架构详解/07 |
-| ⑧ Token 与上下文预算:token 原理/usage/估算与预算 | docs/架构详解/08 |
-| ⑨ LangGraph 重写:State/reducer/条件边/checkpointer/interrupt | docs/架构详解/09 |
-| ⑩ 裸写 vs LangGraph:逐机制对照+同题实测+选型建议 | docs/架构详解/10 |
-| 功能行为契约(SDD) | [docs/specs/](docs/specs/README.md) |
-| 开发流程与环境铁律 | 仓库根 CLAUDE.md |
-
-## 五、从 RAG 到 Agent 的路线图
-
-```
-✅ RAG 全链路(解析→分块→嵌入→混合检索→精排→生成)
-✅ Agent 初版(裸写 while + tool_calls,LLM 自主决策)
-✅ 多轮对话记忆(轮间压缩 + 窗口截断,SPEC-004)
-✅ 多文档知识库 + 工具注册表 + 入库命令(SPEC-005)
-✅ Token 记账与上下文预算(SPEC-006)
-✅ 交互式会话终端 + 会话持久化(SPEC-007)
-✅ 评测基线(金标集 + hit@3/MRR + LLM-judge,SPEC-008)
-✅ LangGraph 等价重写 + 两版对比(SPEC-009,双版并存)
-    │
-    ▼
-【下一步】生产化:token 级流式 / Web UI / 向量数据库(过滤/增量)
-    │
-    ▼
-【最终形态】多轮对话 Agent(检索 + 生成 + 记忆 + 工具调用 + 人工介入)
-```
-
-Agent 框架结论(SPEC-009 对比后):编排复杂到"分支多/要人审/要断点恢复"
-时值得上 LangGraph;简单循环裸写更透明。详见详解 10。
-
-## 六、运行指南
-
-### 环境
-
-- Python:Anaconda `learning` 环境(`conda activate learning`)
-- API Key:复制 `.env.example` 为 `.env`,填入智谱 API Key
-
-### 知识库管理(入库/列表)
+### 安装
 
 ```bash
-python -m agent_project.ingest 你的文档.pdf 另一份.md   # 入库(同名覆盖)
-python -m agent_project.ingest --list                  # 列出已入库文档
+git clone https://github.com/你的用户名/ai-agent.git
+cd ai-agent/learning/agent_project
+pip install -r ../../requirements.txt
 ```
 
-### 交互式会话终端
+### 入库 → 问答
 
 ```bash
-python -m agent_project.chat    # 持续多轮对话;每轮显示 token 统计
+# 1. 将 PDF 放入 docs/sources/ 目录
+
+# 2. 入库（解析 → 分块 → 嵌入 → 建索引）
+python -m agent_project.ingest
+
+# 3. 启动问答终端
+python -m agent_project.chat
 ```
 
-会话内命令:`/new` 新会话 · `/save [名]` 保存 · `/load <名>` 载入 · `/list` 列已存会话 · `/exit` 退出。
-
-### 评测基线(SPEC-008)
+### 运行测试
 
 ```bash
-python tests/eval_retrieval.py          # 三配置检索基线(hit@3 / MRR)
-python tests/eval_answer.py --limit 5   # LLM-as-judge 答案忠实度(1-5)
+cd learning/agent_project
+python -m pytest tests/ -v
 ```
 
-基线数字(16 题金标集,双文档库,k=3,2026-08-19):
+## 项目结构
 
-| 配置 | hit@3 | MRR | 字面题 hit@3 |
-|---|---|---|---|
-| 纯向量 | 75.0% | 0.604 | 89% |
-| 混合(全局 BM25 + 向量,RRF) | 75.0% | 0.604 | **100%** |
-| 混合 + cross-encoder 精排 | 75.0% | **0.688** | 89% |
-
-### 快速验证(复用已有索引)
-
-```python
-from agent_project.generator import rag_answer
-from agent_project.path_manager import PathManager
-
-pm = PathManager()
-index_path = next(pm.OUTPUT_DIR.glob("*.index"))
-meta_path = next(pm.OUTPUT_DIR.glob("*.json"))
-
-result = rag_answer("Wireshark 里怎么解密 HTTPS 流量?", index_path, meta_path, k=3)
-print(result["answer"])
+```
+ai_agent/
+├── learning/agent_project/
+│   ├── src/agent_project/
+│   │   ├── main.py                 # 演示入口
+│   │   ├── ingest.py               # 入库命令
+│   │   ├── chat.py                 # 交互式问答终端
+│   │   ├── preprocessor/           # 文档解析
+│   │   ├── chunker/                # 文本分块
+│   │   ├── embedder/               # 向量嵌入
+│   │   ├── retriever/              # 混合检索（向量 + BM25 + RRF）
+│   │   ├── reranker/               # 精排重排
+│   │   ├── generator/              # LLM 生成
+│   │   ├── agent/                  # Agent 循环（手写版）
+│   │   └── agent_langgraph/        # Agent 循环（LangGraph 版）
+│   ├── docs/specs/                 # 设计文档
+│   ├── tests/                      # 测试套件
+│   └── data/                       # 运行时产物（已 gitignore）
+├── requirements.txt
+└── README.md
 ```
 
-### 多轮对话(Agent + 记忆 + token 记账)
+## 设计原则
 
-```python
-from agent_project.agent import run
+1. **裸写优先**：每个模块手写实现，理解底层机制后再用框架
+2. **测试驱动**：每个阶段有独立验收脚本，可重复验证
+3. **渐进增强**：从简单定长分块到混合检索，逐步升级
+4. **等价对比**：裸写版 vs LangGraph 版并存，用测试证明编排层之外完全一致
 
-ans1, hist, st1 = run("Wireshark 怎么解密 HTTPS 流量?")
-ans2, hist, st2 = run("你说的第二步在哪个菜单打开?", history=hist)  # 追问依赖第 1 轮
-print(ans2, st2)   # st2 含 prompt/completion token 统计(SPEC-006)
-```
+## License
 
-### LangGraph 版(SPEC-009,记忆在 checkpointer)
-
-```python
-from agent_project.agent_langgraph import run
-
-ans1, st1 = run("Wireshark 怎么解密 HTTPS 流量?", thread_id="t1")
-ans2, st2 = run("你说的第二步在哪个菜单打开?", thread_id="t1")  # 同 thread 即记忆
-```
-
-```bash
-python -m agent_project.agent_langgraph   # 演示四幕:同题对比/多轮记忆/跨进程持久化/流式
-```
-
-### 完整流程(重新建库)
-
-```python
-from agent_project.retriever import build_index
-index_path, meta_path, n_chunks = build_index("你的文档.pdf")
-```
-
-### 运行 main.py(全阶段演示)
-
-```bash
-conda activate learning
-python -m agent_project.main
-```
-
-## 七、踩坑速查(细节见各详解的"踩坑记录"节)
-
-| 坑 | 一句话解法 | 详见 |
-|---|---|---|
-| FAISS 中文文件名报错 | 产物名转 ASCII+哈希 | 详解04 |
-| 模型启动联网检查崩溃 | 本地快照路径直载 | 详解03 |
-| HF 离线开关不生效 | 双开关(HF_HUB_OFFLINE + TRANSFORMERS_OFFLINE),或路径直载 | 详解03 |
-| 下载模型 Xet 401 | `HF_HUB_DISABLE_XET=1` | 详解05 |
-| BGE 检索效果差 | query 必须加前缀(embed_query 已内置) | 详解03 |
-| numpy 喂 FAISS 报错 | C-contiguous float32 | 详解04 |
-| FAISS id=-1 占位 | 过滤 `0 <= i < len(chunks)` | 详解04 |
-| 免费 API 429 限流 | max_retries=5 + 重试 | 详解06 |
-| conda 装"小"包后行为大变 | 可能连带升级全家桶,装完回归验证 | 详解03 |
-| 脚本启动慢(~25s) | langchain_text_splitters 首次 import 拖全家,非 bug | 详解04 |
-| 多文档检索小文档抢榜首 | RRF 小文档名次压缩,靠精排纠序(search 工具已两段式) | 详解04§9 |
-| LangGraph 循环上界"少吃一轮" | fallback 判断放 tools 出边(工具执行完再判耗尽) | 详解09 |
-| 离线测试测出"假 bug" | fake 替身要遵循真实 API 协议语义(tools=None 无 tool_calls) | 详解09 |
-| 0.x 教程 API 对不上 | langgraph 1.x 先跑探针脚本验 API 再写码 | 详解09 |
-| 免费 API 偶发请求挂起 | ReadTimeout 外层重试兜住(429 已有指数退避) | 详解09 |
-
----
-
-*文档分工:specs 管"该怎样"(契约),架构详解管"怎么实现"(机制),本 README 是入口。
-当前版本对应:RAG 六段 + Agent 循环 + 多轮记忆 + 终端 + 评测基线 + LangGraph 对照重写(SPEC-009)完成。*
+MIT
